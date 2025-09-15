@@ -1,0 +1,13 @@
+# Luxamine Android App Requirements
+
+# Core dependencies
+kivy>=2.1.0
+buildozer>=1.5.0
+cython==0.29.36
+
+# Additional dependencies for Android compilation
+setuptools>=65.0.0
+wheel>=0.37.0
+
+# Optional: for enhanced UI
+kivymd>=1.1.0
