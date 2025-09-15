@@ -1,0 +1,56 @@
+name: Build Luxamine APK (Anti-Queue)
+
+# Déclenchement optimisé pour éviter les queues
+on:
+  workflow_dispatch:  # Manuel seulement - évite les queues automatiques
+  push:
+    branches: [ main ]
+    paths: [ 'main.py', 'buildozer.spec' ]  # Seulement si fichiers importants changent
+
+# Évite les builds multiples simultanés
+concurrency:
+  group: luxamine-build
+  cancel-in-progress: true  # Annule les anciens builds en cours
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04  # Plus disponible que ubuntu-latest
+    timeout-minutes: 45    # Évite les builds qui traînent
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Cache pour accélérer et réduire la charge
+    - name: Cache Buildozer
+      uses: actions/cache@v3
+      with:
+        path: |
+          .buildozer
+          ~/.buildozer
+        key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          buildozer-${{ runner.os }}-
+
+    - name: Build APK
+      uses: ArtiomTr/buildozer-action@v1
+      with:
+        command: buildozer android debug
+        buildozer_version: stable
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: luxamine-apk-${{ github.run_number }}
+        path: bin/*.apk
+        retention-days: 7  # Garde seulement 7 jours pour économiser l'espace
+
+    # Notification de fin (optionnel)
+    - name: Build Summary
+      if: always()
+      run: |
+        if [ -f bin/*.apk ]; then
+          echo "✅ APK compilé avec succès!"
+          ls -lh bin/*.apk
+        else
+          echo "❌ Échec de compilation"
