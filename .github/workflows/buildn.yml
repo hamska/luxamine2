@@ -1,0 +1,58 @@
+name: Build Luxamine APK (Self-Hosted)
+
+on:
+  workflow_dispatch:  # Lancement manuel
+  push:
+    branches: [ main ]
+    paths: [ 'main.py', 'buildozer.spec' ]
+
+concurrency:
+  group: luxamine-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: self-hosted
+    timeout-minutes: 45
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y python3-pip openjdk-17-jdk unzip zlib1g-dev \
+                           libncurses5 libncurses5-dev libtinfo5 git
+        pip install --upgrade pip
+        pip install cython buildozer virtualenv
+
+    # Cache Buildozer
+    - name: Cache Buildozer
+      uses: actions/cache@v3
+      with:
+        path: |
+          .buildozer
+          ~/.buildozer
+        key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          buildozer-${{ runner.os }}-
+
+    - name: Build APK
+      run: buildozer android debug
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: luxamine-apk-${{ github.run_number }}
+        path: bin/*.apk
+        retention-days: 7
+
+    - name: Build Summary
+      if: always()
+      run: |
+        if ls bin/*.apk 1> /dev/null 2>&1; then
+          echo "✅ APK compilé avec succès!"
+          ls -lh bin/*.apk
+        else
+          echo "❌ Échec de compilation"
