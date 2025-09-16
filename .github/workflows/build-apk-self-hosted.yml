@@ -105,6 +105,8 @@ jobs:
         # Installer buildozer
         pip3 install buildozer==1.5.0 cython==0.29.33
 
+        # Activer immédiatement + pour les steps suivants
+        export PATH=$PATH:$HOME/.local/bin
         echo "$HOME/.local/bin" >> $GITHUB_PATH
         
         buildozer --version
