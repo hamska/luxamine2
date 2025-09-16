@@ -64,18 +64,15 @@ jobs:
       run: |
         echo "📱 Setting up Android SDK..."
         
-        # Créer le répertoire Android SDK
         sudo mkdir -p /opt/android-sdk
         sudo chown $USER:$USER /opt/android-sdk
         
-        # Variables d'environnement Android
         export ANDROID_HOME=/opt/android-sdk
         export ANDROID_SDK_ROOT=/opt/android-sdk
         echo "ANDROID_HOME=/opt/android-sdk" >> $GITHUB_ENV
         echo "ANDROID_SDK_ROOT=/opt/android-sdk" >> $GITHUB_ENV
         echo "PATH=$PATH:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools" >> $GITHUB_ENV
         
-        # Télécharger et installer SDK si pas déjà fait
         if [ ! -d "/opt/android-sdk/cmdline-tools" ]; then
           echo "Downloading Android SDK..."
           cd /tmp
@@ -84,7 +81,6 @@ jobs:
           mkdir -p /opt/android-sdk/cmdline-tools
           mv cmdline-tools /opt/android-sdk/cmdline-tools/latest
           
-          # Accepter les licences et installer les composants
           yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
           /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
@@ -102,11 +98,13 @@ jobs:
         python3 --version
         pip3 --version
         
-        # Installer buildozer avec version spécifique
-        pip3 install --upgrade pip setuptools wheel
+        # Fix compatibilité setuptools/packaging
+        pip3 install --upgrade pip
+        pip3 install "setuptools<70" "packaging<24" wheel
+        
+        # Installer buildozer
         pip3 install buildozer==1.5.0 cython==0.29.33
         
-        # Vérifier l'installation
         buildozer --version
         which buildozer
 
@@ -117,15 +115,11 @@ jobs:
         echo "ANDROID_HOME: $ANDROID_HOME"
         echo "PATH: $PATH"
         echo "Working directory: $(pwd)"
-        echo "Files in directory:"
         ls -la
-        
-        # Vérifier les outils
         java -version
         python3 --version
         buildozer --version
         
-        # Vérifier Android SDK
         if [ -d "$ANDROID_HOME" ]; then
           echo "Android SDK found at: $ANDROID_HOME"
           ls -la $ANDROID_HOME/
@@ -175,18 +169,13 @@ jobs:
       run: |
         echo "🚀 Starting APK build with full debug..."
         
-        # Variables d'environnement pour buildozer
         export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
         export ANDROID_HOME=/opt/android-sdk
         export ANDROID_SDK_ROOT=/opt/android-sdk
         export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
         
-        # Build avec logs complets
         echo "Environment variables set, starting build..."
-        buildozer android debug --verbose 2>&1 | tee build.log
-        
-        # Vérifier le résultat
-        if [ $? -eq 0 ]; then
+        if buildozer android debug --verbose 2>&1 | tee build.log; then
           echo "✅ Build successful!"
         else
           echo "❌ Build failed!"
@@ -206,9 +195,7 @@ jobs:
           ls -lh "$APK_FILE"
         else
           echo "❌ No APK file found!"
-          echo "Contents of current directory:"
           ls -la
-          echo "Contents of bin directory (if exists):"
           ls -la bin/ || echo "No bin directory"
           exit 1
         fi
@@ -255,17 +242,11 @@ jobs:
           echo "Installing Android SDK..."
           sudo mkdir -p /opt/android-sdk
           sudo chown $USER:$USER /opt/android-sdk
-          
-          # Download command line tools
           cd /tmp
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
           unzip -q commandlinetools-linux-9477386_latest.zip
-          
-          # Install SDK
           mkdir -p /opt/android-sdk/cmdline-tools
           mv cmdline-tools /opt/android-sdk/cmdline-tools/latest
-          
-          # Install required components
           yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
           /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
@@ -278,7 +259,8 @@ jobs:
 
     - name: Setup Python environment
       run: |
-        python3 -m pip install --upgrade pip setuptools wheel
+        python3 -m pip install --upgrade pip
+        pip3 install "setuptools<70" "packaging<24" wheel
         pip3 install buildozer==1.5.0 cython==0.29.33
 
     - name: Cache Buildozer dependencies
@@ -303,12 +285,8 @@ jobs:
       run: |
         echo "🚀 Starting APK build..."
         echo "Working directory: $(pwd)"
-        echo "Files present:"
         ls -la
-        
-        # Build with verbose output
         buildozer -v android debug
-        
         echo "✅ Build completed"
 
     - name: Verify APK creation
@@ -323,7 +301,6 @@ jobs:
           echo "✅ APK found: $APK_FILE ($(du -h "$APK_FILE" | cut -f1))"
         else
           echo "❌ No APK file found!"
-          echo "Contents of bin directory:"
           ls -la bin/ || echo "No bin directory"
           exit 1
         fi
@@ -388,7 +365,4 @@ jobs:
     - name: Cleanup (optional)
       if: always()
       run: |
-        # Nettoyer les fichiers temporaires pour économiser l'espace
-        # Décommentez si l'espace disque est limité
-        # rm -rf .buildozer/android/platform/build-*
         echo "Build completed, temporary files preserved for caching"
