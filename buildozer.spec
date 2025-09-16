@@ -9,9 +9,9 @@ requirements = python3,kivy
 orientation = portrait
 fullscreen = 0
 
-android.api = 28
+android.api = 33
 android.minapi = 21
-android.ndk = 19b
+android.ndk = 23b
 android.private_storage = True
 android.accept_sdk_license = True
 android.archs = armeabi-v7a
