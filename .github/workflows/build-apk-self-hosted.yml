@@ -111,7 +111,7 @@ jobs:
         ls -la
         
         # Build with verbose output
-        buildozer android debug --verbose
+        buildozer -v android debug
         
         echo "✅ Build completed"
 
