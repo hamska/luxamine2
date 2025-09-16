@@ -9,28 +9,24 @@ jobs:
   build:
     runs-on: self-hosted
     timeout-minutes: 60
-    
+    env:
+      # p4a respecte ces variables (mieux que ANDROID_HOME)
+      ANDROIDSDK: /opt/android-sdk
+      ANDROIDNDK: /opt/android-sdk/ndk/25.1.8937393
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: System info and cleanup
+    - name: System info (no cleanup)
       run: |
         echo "🔍 System Information:"
-        whoami
-        pwd
-        echo "HOME: $HOME"
-        echo "PATH: $PATH"
-        df -h
-        free -h
-        
-        # Nettoyer les anciens builds
-        rm -rf .buildozer || true
-        rm -rf bin || true
+        whoami; pwd
+        echo "HOME=$HOME"
+        df -h; free -h
 
-    - name: Install system dependencies
+    - name: Install system dependencies (incl. zip)
       run: |
-        echo "📦 Installing system dependencies..."
         sudo apt-get update -qq
         sudo apt-get install -y \
           python3 python3-pip python3-dev python3-venv \
@@ -43,23 +39,21 @@ jobs:
           autotools-dev autoconf pkg-config cmake \
           libtool automake
 
-    - name: Setup Java environment
+    - name: Setup Java 11
       run: |
-        echo "☕ Setting up Java..."
-        export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
         echo "JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
-        echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+        echo "/usr/lib/jvm/java-11-openjdk-amd64/bin" >> $GITHUB_PATH
         java -version
 
-    - name: Install Android SDK and NDK
+    - name: Install Android SDK + NDK (25b)
       run: |
-        echo "📱 Installing Android SDK + NDK..."
         sudo mkdir -p /opt/android-sdk
         sudo chown $USER:$USER /opt/android-sdk
         cd /tmp
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
-        unzip -q cmdline-tools.zip
+        unzip -q -o cmdline-tools.zip
         mkdir -p /opt/android-sdk/cmdline-tools
+        rm -rf /opt/android-sdk/cmdline-tools/latest || true
         mv cmdline-tools /opt/android-sdk/cmdline-tools/latest
 
         yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
@@ -67,43 +61,35 @@ jobs:
           "platform-tools" \
           "platforms;android-33" \
           "build-tools;33.0.2" \
-          "ndk;25.2.9519653"
+          "ndk;25.1.8937393"
 
-        echo "ANDROID_HOME=/opt/android-sdk" >> $GITHUB_ENV
-        echo "ANDROID_SDK_ROOT=/opt/android-sdk" >> $GITHUB_ENV
         echo "/opt/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
         echo "/opt/android-sdk/platform-tools" >> $GITHUB_PATH
 
-    - name: Setup Python environment
+    - name: Setup Python + Buildozer
       run: |
-        echo "🐍 Setting up Python environment..."
         python3 --version
         pip3 --version
-
         pip3 install --upgrade pip
         pip3 install "setuptools<70" "packaging<24" wheel
         pip3 install buildozer==1.5.0 cython==0.29.33
-
-        # Ajouter buildozer au PATH
+        # buildozer s’installe en ~/.local/bin en mode --user
         echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-    - name: Verify environment
+    - name: Debug PATH & tools
       run: |
-        echo "🔍 Environment verification:"
-        echo "JAVA_HOME: $JAVA_HOME"
-        echo "ANDROID_HOME: $ANDROID_HOME"
-        echo "PATH: $PATH"
-        java -version
-        python3 --version
-        buildozer --version
-        which buildozer
-        which zip
-        which javac
+        echo "PATH=$PATH"
+        which buildozer || { echo "❌ buildozer not found"; exit 1; }
+        which zip || { echo "❌ zip not found"; exit 1; }
+        which javac || { echo "❌ javac not found"; exit 1; }
+        echo "ANDROIDSDK=$ANDROIDSDK"
+        echo "ANDROIDNDK=$ANDROIDNDK"
+        test -d "$ANDROIDSDK" || { echo "❌ ANDROIDSDK missing"; exit 1; }
+        test -d "$ANDROIDNDK" || { echo "❌ ANDROIDNDK missing"; ls -la /opt/android-sdk/ndk; exit 1; }
 
     - name: Create buildozer.spec if missing
       run: |
         if [ ! -f "buildozer.spec" ]; then
-          echo "📝 Creating buildozer.spec..."
           cat > buildozer.spec << 'EOF'
         [app]
         title = Luxamine
@@ -126,34 +112,38 @@ jobs:
         warn_on_root = 1
         EOF
         fi
+        echo "📋 buildozer.spec:"
+        sed -n '1,120p' buildozer.spec
 
-        echo "📋 Buildozer.spec content:"
-        cat buildozer.spec
-
-    - name: Build APK with full debug
+    - name: Build APK (full debug + fail on error)
       run: |
-        echo "🚀 Starting APK build with full debug..."
-        buildozer -v android debug | tee build.log
+        set -e
+        echo "🚀 Starting APK build..."
+        if buildozer android debug --verbose 2>&1 | tee build.log; then
+          echo "✅ Build successful"
+        else
+          echo "❌ Build failed — last 80 lines:"
+          tail -80 build.log || true
+          exit 1
+        fi
 
     - name: Verify APK creation
       run: |
-        echo "📦 Checking for APK files..."
-        find . -name "*.apk" -type f -exec ls -lh {} \;
-        
-        if [ -f bin/*.apk ]; then
-          APK_FILE=$(ls bin/*.apk | head -1)
+        echo "📦 APKs:"
+        find . -name "*.apk" -type f -printf "%p\t%k KB\n" | sort
+        if compgen -G "bin/*.apk" > /dev/null; then
+          APK_FILE=$(ls -1t bin/*.apk | head -1)
           echo "APK_FILE=$APK_FILE" >> $GITHUB_ENV
           echo "APK_SIZE=$(du -h "$APK_FILE" | cut -f1)" >> $GITHUB_ENV
-          echo "✅ APK found: $APK_FILE ($(du -h "$APK_FILE" | cut -f1))"
+          echo "✅ Found: $APK_FILE"
         else
-          echo "❌ No APK file found!"
-          ls -la bin/ || echo "No bin directory"
+          echo "❌ No APK produced"
           exit 1
         fi
 
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
       with:
-        name: luxamine-apk-${{ github.run_number }}
-        path: bin/*.apk
+        name: luxamine-apk-debug-${{ github.run_number }}
+        path: ${{ env.APK_FILE }}
         retention-days: 30
