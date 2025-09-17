@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Luxamine - Éditeur de cartes Mifare Amine
-Version ultra-simple : charge automatiquement test.eml depuis Download
+Version avec demande de permissions Android au runtime
 """
 
 import os
@@ -18,6 +18,14 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.metrics import dp
 from kivy.clock import Clock
+
+# Import pour les permissions Android
+try:
+    from android.permissions import request_permissions, Permission
+    from android.storage import primary_external_storage_path
+    ANDROID_AVAILABLE = True
+except ImportError:
+    ANDROID_AVAILABLE = False
 
 class LuxamineCore:
     """Module de cryptographie Mifare intégré"""
@@ -79,9 +87,10 @@ class LuxamineApp(App):
         self.core = LuxamineCore()
         self.eml_content = ""
         self.card_values = {}
-        self.download_path = "/storage/emulated/0/Download"
+        self.download_path = None
         self.test_file = "test.eml"
         self.output_file = "test_patch.eml"
+        self.permissions_granted = False
         
     def build(self):
         self.title = "Luxamine - Éditeur Mifare"
@@ -97,6 +106,15 @@ class LuxamineApp(App):
             bold=True
         )
         main_layout.add_widget(title_label)
+        
+        # Info permissions
+        self.permission_label = Label(
+            text='Demande des permissions en cours...',
+            size_hint_y=None,
+            height=dp(30),
+            font_size=dp(10)
+        )
+        main_layout.add_widget(self.permission_label)
         
         # Info fichier
         self.file_info_label = Label(
@@ -136,57 +154,158 @@ class LuxamineApp(App):
         
         # Status
         self.status_label = Label(
-            text=f'Prêt - Cliquez "Charger {self.test_file}" pour commencer',
+            text='Initialisation...',
             size_hint_y=None,
             height=dp(40),
             font_size=dp(12)
         )
         main_layout.add_widget(self.status_label)
         
-        # Charger automatiquement au démarrage
-        Clock.schedule_once(self.auto_load_on_start, 1)
+        # Demander les permissions au démarrage
+        Clock.schedule_once(self.request_permissions, 1)
         
         return main_layout
     
-    def auto_load_on_start(self, dt):
-        """Charge automatiquement test.eml au démarrage"""
+    def request_permissions(self, dt):
+        """Demande les permissions Android nécessaires"""
+        if ANDROID_AVAILABLE:
+            try:
+                # Demander les permissions de stockage
+                permissions = [
+                    Permission.READ_EXTERNAL_STORAGE,
+                    Permission.WRITE_EXTERNAL_STORAGE
+                ]
+                
+                request_permissions(permissions, self.on_permissions_result)
+                self.permission_label.text = "Permissions demandées - Veuillez accepter"
+                self.status_label.text = "En attente des permissions..."
+                
+            except Exception as e:
+                self.permission_label.text = f"Erreur permissions: {str(e)}"
+                self.try_without_permissions()
+        else:
+            self.permission_label.text = "Mode test (pas sur Android)"
+            self.try_without_permissions()
+    
+    def on_permissions_result(self, permissions, grant_results):
+        """Callback appelé après la demande de permissions"""
+        try:
+            if all(grant_results):
+                self.permissions_granted = True
+                self.permission_label.text = "✅ Permissions accordées"
+                self.status_label.text = f'Prêt - Cliquez "Charger {self.test_file}"'
+                # Charger automatiquement après permissions
+                Clock.schedule_once(self.auto_load_after_permissions, 1)
+            else:
+                self.permission_label.text = "❌ Permissions refusées"
+                self.status_label.text = "Permissions nécessaires pour accéder aux fichiers"
+                self.show_permission_error()
+        except Exception as e:
+            self.permission_label.text = f"Erreur callback: {str(e)}"
+            self.try_without_permissions()
+    
+    def show_permission_error(self):
+        """Affiche un message d'erreur pour les permissions"""
+        self.show_error(
+            "Permissions requises !\n\n"
+            "L'application a besoin d'accéder au stockage pour :\n"
+            "• Lire le fichier test.eml\n"
+            "• Sauvegarder test_patch.eml\n\n"
+            "Veuillez :\n"
+            "1. Aller dans Paramètres > Applications > Luxamine\n"
+            "2. Activer les permissions de stockage\n"
+            "3. Redémarrer l'application"
+        )
+    
+    def try_without_permissions(self):
+        """Essaie de fonctionner sans permissions explicites"""
+        self.permissions_granted = False
+        self.permission_label.text = "⚠️ Permissions non vérifiées"
+        self.status_label.text = f'Tentative de chargement {self.test_file}...'
+        Clock.schedule_once(self.auto_load_after_permissions, 1)
+    
+    def auto_load_after_permissions(self, dt):
+        """Charge automatiquement test.eml après les permissions"""
         self.load_test_file(None)
+    
+    def get_download_paths(self):
+        """Retourne les chemins possibles pour le dossier Download"""
+        paths = []
+        
+        if ANDROID_AVAILABLE:
+            try:
+                # Utiliser le chemin Android officiel
+                primary_path = primary_external_storage_path()
+                if primary_path:
+                    paths.append(os.path.join(primary_path, "Download"))
+                    paths.append(os.path.join(primary_path, "Downloads"))
+            except:
+                pass
+        
+        # Chemins de fallback
+        fallback_paths = [
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Downloads",
+            "/sdcard/Download",
+            "/sdcard/Downloads",
+            "/mnt/sdcard/Download",
+            "/mnt/sdcard/Downloads"
+        ]
+        
+        paths.extend(fallback_paths)
+        return paths
     
     def load_test_file(self, instance):
         """Charge automatiquement test.eml depuis Download"""
         try:
-            # Chemins possibles pour Download
-            possible_paths = [
-                "/storage/emulated/0/Download",
-                "/sdcard/Download",
-                "/storage/emulated/0/Downloads", 
-                "/sdcard/Downloads"
-            ]
+            # Obtenir les chemins possibles
+            possible_paths = self.get_download_paths()
             
             file_path = None
             for path in possible_paths:
                 test_path = os.path.join(path, self.test_file)
-                if os.path.exists(test_path):
-                    file_path = test_path
-                    self.download_path = path  # Mémoriser le bon chemin
-                    break
+                try:
+                    if os.path.exists(test_path) and os.access(test_path, os.R_OK):
+                        file_path = test_path
+                        self.download_path = path
+                        break
+                except Exception as e:
+                    continue
             
             if file_path:
-                # Lire le fichier test.eml
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    self.eml_content = f.read()
-                
-                # Décrypter et extraire les valeurs
-                self.decrypt_and_extract()
-                self.create_edit_interface()
-                
-                self.status_label.text = f'✅ {self.test_file} chargé depuis {self.download_path}'
-                
+                try:
+                    # Lire le fichier test.eml
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        self.eml_content = f.read()
+                    
+                    # Décrypter et extraire les valeurs
+                    self.decrypt_and_extract()
+                    self.create_edit_interface()
+                    
+                    self.status_label.text = f'✅ {self.test_file} chargé depuis {self.download_path}'
+                    
+                except PermissionError:
+                    self.show_error(
+                        f"❌ Permission refusée pour lire {self.test_file}\n\n"
+                        "Solutions :\n"
+                        "1. Paramètres > Applications > Luxamine > Permissions > Stockage > Autoriser\n"
+                        "2. Redémarrer l'application\n"
+                        "3. Vérifier que test.eml est bien dans Téléchargements"
+                    )
+                except Exception as e:
+                    self.show_error(f"Erreur lecture {self.test_file}: {str(e)}")
+                    
             else:
-                self.show_error(f"❌ Fichier {self.test_file} non trouvé dans Download.\n\nVeuillez placer votre fichier {self.test_file} dans le dossier Téléchargements de votre Samsung S25.")
+                # Lister les chemins testés pour debug
+                paths_tested = "\n".join([f"• {path}" for path in possible_paths[:5]])
+                self.show_error(
+                    f"❌ Fichier {self.test_file} non trouvé\n\n"
+                    f"Chemins testés :\n{paths_tested}\n\n"
+                    f"Veuillez placer {self.test_file} dans le dossier Téléchargements de votre Samsung S25."
+                )
                 
         except Exception as e:
-            self.show_error(f"Erreur lors du chargement de {self.test_file}: {str(e)}")
+            self.show_error(f"Erreur lors du chargement: {str(e)}")
     
     def decrypt_and_extract(self):
         """Décrypte le fichier EML et extrait les valeurs importantes"""
@@ -282,6 +401,10 @@ class LuxamineApp(App):
                 self.show_error("Aucun fichier chargé. Chargez d'abord test.eml.")
                 return
             
+            if not self.download_path:
+                self.show_error("Chemin de sauvegarde non défini.")
+                return
+            
             # Récupération des nouvelles valeurs
             new_values = {}
             new_values['version_a'] = int(self.inputs['version_a'].text or 0)
@@ -313,11 +436,21 @@ class LuxamineApp(App):
 """
             
             # Écriture du fichier modifié
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(modified_content)
-            
-            self.status_label.text = f'✅ {self.output_file} sauvegardé dans Download'
-            self.show_success(f"Fichier modifié sauvegardé:\n{output_path}\n\nLes nouvelles valeurs ont été appliquées dans {self.output_file}.")
+            try:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(modified_content)
+                
+                self.status_label.text = f'✅ {self.output_file} sauvegardé dans Download'
+                self.show_success(f"Fichier modifié sauvegardé:\n{output_path}\n\nLes nouvelles valeurs ont été appliquées dans {self.output_file}.")
+                
+            except PermissionError:
+                self.show_error(
+                    f"❌ Permission refusée pour écrire {self.output_file}\n\n"
+                    "Vérifiez les permissions de stockage dans :\n"
+                    "Paramètres > Applications > Luxamine > Permissions"
+                )
+            except Exception as e:
+                self.show_error(f"Erreur écriture: {str(e)}")
             
         except Exception as e:
             self.show_error(f"Erreur lors de la sauvegarde: {str(e)}")
@@ -335,7 +468,7 @@ class LuxamineApp(App):
     def show_error(self, message):
         """Affiche un popup d'erreur"""
         content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
-        label = Label(text=message, text_size=(300, None), halign='center')
+        label = Label(text=message, text_size=(350, None), halign='center')
         ok_btn = Button(text='OK', size_hint_y=None, height=dp(50))
         content.add_widget(label)
         content.add_widget(ok_btn)
@@ -343,7 +476,7 @@ class LuxamineApp(App):
         popup = Popup(
             title='Information',
             content=content,
-            size_hint=(0.8, 0.5)
+            size_hint=(0.9, 0.6)
         )
         ok_btn.bind(on_press=popup.dismiss)
         popup.open()
@@ -351,7 +484,7 @@ class LuxamineApp(App):
     def show_success(self, message):
         """Affiche un popup de succès"""
         content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
-        label = Label(text=message, text_size=(300, None), halign='center')
+        label = Label(text=message, text_size=(350, None), halign='center')
         ok_btn = Button(text='OK', size_hint_y=None, height=dp(50))
         content.add_widget(label)
         content.add_widget(ok_btn)
@@ -359,11 +492,10 @@ class LuxamineApp(App):
         popup = Popup(
             title='Succès',
             content=content,
-            size_hint=(0.8, 0.5)
+            size_hint=(0.9, 0.6)
         )
         ok_btn.bind(on_press=popup.dismiss)
         popup.open()
 
 if __name__ == '__main__':
     LuxamineApp().run()
-    
