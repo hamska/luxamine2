@@ -10,13 +10,16 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 60
     env:
-      # p4a respecte ces variables (mieux que ANDROID_HOME)
+      # Empêche p4a de télécharger son propre SDK/NDK et utilise ceux du système
+      P4A_NO_ANDROID_DOWNLOAD: "1"
       ANDROIDSDK: /opt/android-sdk
       ANDROIDNDK: /opt/android-sdk/ndk/25.1.8937393
 
     steps:
-    - name: Checkout code
+    - name: Checkout code (do NOT clean .buildozer)
       uses: actions/checkout@v4
+      with:
+        clean: false   # <-- clé : ne pas supprimer .buildozer/ entre les runs
 
     - name: System info (no cleanup)
       run: |
@@ -24,6 +27,7 @@ jobs:
         whoami; pwd
         echo "HOME=$HOME"
         df -h; free -h
+        # Surtout ne PAS rm -rf .buildozer ni bin ici
 
     - name: Install system dependencies (incl. zip)
       run: |
@@ -73,8 +77,7 @@ jobs:
         pip3 install --upgrade pip
         pip3 install "setuptools<70" "packaging<24" wheel
         pip3 install buildozer==1.5.0 cython==0.29.33
-        # buildozer s’installe en ~/.local/bin en mode --user
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH   # buildozer en --user
 
     - name: Debug PATH & tools
       run: |
@@ -86,6 +89,8 @@ jobs:
         echo "ANDROIDNDK=$ANDROIDNDK"
         test -d "$ANDROIDSDK" || { echo "❌ ANDROIDSDK missing"; exit 1; }
         test -d "$ANDROIDNDK" || { echo "❌ ANDROIDNDK missing"; ls -la /opt/android-sdk/ndk; exit 1; }
+        # Vérifie si ton cache local existe (hérité du build manuel)
+        ls -la .buildozer || true
 
     - name: Create buildozer.spec if missing
       run: |
@@ -112,18 +117,17 @@ jobs:
         warn_on_root = 1
         EOF
         fi
-        echo "📋 buildozer.spec:"
-        sed -n '1,120p' buildozer.spec
 
-    - name: Build APK (full debug + fail on error)
+    - name: Build APK (use local cache; fail on error)
       run: |
         set -e
         echo "🚀 Starting APK build..."
+        # IMPORTANT : on ne supprime PAS .buildozer pour réutiliser le cache
         if buildozer android debug --verbose 2>&1 | tee build.log; then
           echo "✅ Build successful"
         else
-          echo "❌ Build failed — last 80 lines:"
-          tail -80 build.log || true
+          echo "❌ Build failed — last 120 lines:"
+          tail -120 build.log || true
           exit 1
         fi
 
