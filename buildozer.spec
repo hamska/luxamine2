@@ -4,7 +4,7 @@ package.name = luxamine
 package.domain = com.luxamine.editor
 source.dir = .
 source.include_exts = py,eml
-version = 1.4
+version = 1.5
 requirements = python3,kivy,plyer
 orientation = portrait
 
