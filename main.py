@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Luxamine - Éditeur de cartes Mifare Amine
-Version corrigée qui détecte les fichiers .eml
+Version avec sélecteur système Android (SAF) via Plyer
 """
 
 import os
@@ -14,10 +14,17 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
-from kivy.uix.filechooser import FileChooserListView
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.metrics import dp
+from kivy.clock import Clock
+
+# Import Plyer pour le sélecteur système Android
+try:
+    from plyer import filechooser
+    PLYER_AVAILABLE = True
+except ImportError:
+    PLYER_AVAILABLE = False
 
 class LuxamineCore:
     """Module de cryptographie Mifare intégré"""
@@ -93,7 +100,7 @@ class LuxamineCore:
         v[0], v[1] = v0, v1
     
     def xtea_crypt(self, num_rounds, v, key):
-        v0, v1 = v[0], v1]
+        v0, v1 = v[0], v[1]
         delta = 0x9E3779B9
         sumv = 0
         for _ in range(num_rounds):
@@ -151,15 +158,25 @@ class LuxamineApp(App):
         )
         main_layout.add_widget(title_label)
         
-        # Bouton charger
+        # Bouton charger avec sélecteur système Android
         self.load_button = Button(
-            text='Charger fichier EML',
+            text='Charger fichier EML (Sélecteur système)',
             size_hint_y=None,
             height=dp(50),
             font_size=dp(16)
         )
-        self.load_button.bind(on_press=self.show_file_chooser)
+        self.load_button.bind(on_press=self.open_file_chooser)
         main_layout.add_widget(self.load_button)
+        
+        # Info sur Plyer
+        plyer_status = "✅ Sélecteur système Android (SAF)" if PLYER_AVAILABLE else "❌ Plyer non disponible"
+        plyer_label = Label(
+            text=plyer_status,
+            size_hint_y=None,
+            height=dp(25),
+            font_size=dp(10)
+        )
+        main_layout.add_widget(plyer_label)
         
         # Info fichier
         self.file_info_label = Label(
@@ -198,60 +215,56 @@ class LuxamineApp(App):
         
         return main_layout
     
-    def show_file_chooser(self, instance):
-        content = BoxLayout(orientation='vertical', spacing=dp(10))
+    def open_file_chooser(self, instance):
+        """Ouvre le sélecteur de fichiers système Android via Plyer"""
+        if not PLYER_AVAILABLE:
+            self.show_error("Plyer n'est pas disponible.\nImpossible d'utiliser le sélecteur système Android.")
+            return
         
-        # Instructions
-        instructions = Label(
-            text='Naviguez vers votre fichier .eml\nTous les fichiers sont affichés - cherchez les .eml',
-            size_hint_y=None,
-            height=dp(50),
-            font_size=dp(12)
-        )
-        content.add_widget(instructions)
-        
-        # Sélecteur de fichiers SANS filtre (pour voir tous les fichiers)
-        filechooser = FileChooserListView(
-            path='/storage/emulated/0/' if os.path.exists('/storage/emulated/0/') else '/sdcard/' if os.path.exists('/sdcard/') else os.path.expanduser('~')
-        )
-        content.add_widget(filechooser)
-        
-        # Boutons
-        buttons = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(50), spacing=dp(10))
-        select_btn = Button(text='Sélectionner ce fichier')
-        cancel_btn = Button(text='Annuler')
-        buttons.add_widget(select_btn)
-        buttons.add_widget(cancel_btn)
-        content.add_widget(buttons)
-        
-        popup = Popup(title='Choisir un fichier EML', content=content, size_hint=(0.95, 0.9))
-        
-        def select_file(btn):
-            if filechooser.selection:
-                selected_file = filechooser.selection[0]
-                # Vérifier si c'est un fichier .eml
-                if selected_file.lower().endswith('.eml'):
-                    self.load_eml_file(selected_file)
-                    popup.dismiss()
+        try:
+            # Utiliser le sélecteur système Android (SAF)
+            filechooser.open_file(
+                on_selection=self.on_file_selected,
+                filters=['*.eml'],  # Filtre pour fichiers .eml
+                title="Sélectionner un fichier EML"
+            )
+            
+            # Mettre à jour le status
+            self.status_label.text = "Sélecteur de fichiers ouvert..."
+            
+        except Exception as e:
+            self.show_error(f"Erreur lors de l'ouverture du sélecteur: {str(e)}")
+    
+    def on_file_selected(self, selection):
+        """Callback appelé quand un fichier est sélectionné"""
+        try:
+            if selection:
+                # selection est une liste, prendre le premier fichier
+                filepath = selection[0] if isinstance(selection, list) else selection
+                
+                # Vérifier que c'est bien un fichier .eml
+                if filepath and filepath.lower().endswith('.eml'):
+                    self.load_eml_file(filepath)
                 else:
-                    # Afficher un message d'erreur
-                    self.show_error("Veuillez sélectionner un fichier avec l'extension .eml")
+                    self.show_error("Le fichier sélectionné n'est pas un fichier .eml")
             else:
-                self.show_error("Aucun fichier sélectionné")
-        
-        select_btn.bind(on_press=select_file)
-        cancel_btn.bind(on_press=lambda x: popup.dismiss())
-        popup.open()
+                self.status_label.text = "Aucun fichier sélectionné"
+                
+        except Exception as e:
+            self.show_error(f"Erreur lors de la sélection: {str(e)}")
     
     def load_eml_file(self, filepath):
+        """Charge et traite le fichier EML sélectionné"""
         try:
-            with open(filepath, 'r') as f:
+            # Lire le fichier
+            with open(filepath, 'r', encoding='utf-8') as f:
                 self.eml_content = f.read()
             
             # Décryptage et extraction
             self.decrypt_and_extract()
             self.create_edit_interface()
             
+            # Mettre à jour l'interface
             filename = os.path.basename(filepath)
             self.file_info_label.text = f'Fichier: {filename}'
             self.status_label.text = 'Fichier chargé - Vous pouvez modifier les valeurs'
@@ -317,6 +330,7 @@ class LuxamineApp(App):
             }
     
     def create_edit_interface(self):
+        """Crée l'interface d'édition des valeurs"""
         self.edit_container.clear_widgets()
         
         scroll = ScrollView()
@@ -362,6 +376,7 @@ class LuxamineApp(App):
         self.edit_container.add_widget(scroll)
     
     def save_modified_eml(self, instance):
+        """Sauvegarde le fichier EML modifié"""
         try:
             # Récupération des nouvelles valeurs
             new_values = {}
@@ -412,7 +427,7 @@ class LuxamineApp(App):
 """
             
             # Écriture du fichier modifié
-            with open(output_path, 'w') as f:
+            with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(modified_content)
             
             self.status_label.text = f'Fichier sauvegardé: {os.path.basename(output_path)}'
@@ -422,6 +437,7 @@ class LuxamineApp(App):
             self.show_error(f"Erreur lors de la sauvegarde: {str(e)}")
     
     def reset_form(self, instance):
+        """Remet les valeurs par défaut dans le formulaire"""
         if hasattr(self, 'card_values') and hasattr(self, 'inputs'):
             for key, input_field in self.inputs.items():
                 if key in ['credit_a', 'credit_b']:
@@ -431,6 +447,7 @@ class LuxamineApp(App):
             self.status_label.text = 'Valeurs réinitialisées'
     
     def show_error(self, message):
+        """Affiche un popup d'erreur"""
         content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
         label = Label(text=message, text_size=(300, None), halign='center')
         ok_btn = Button(text='OK', size_hint_y=None, height=dp(50))
@@ -446,6 +463,7 @@ class LuxamineApp(App):
         popup.open()
     
     def show_success(self, message):
+        """Affiche un popup de succès"""
         content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
         label = Label(text=message, text_size=(300, None), halign='center')
         ok_btn = Button(text='OK', size_hint_y=None, height=dp(50))
