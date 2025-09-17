@@ -4,8 +4,8 @@ package.name = luxamine
 package.domain = com.luxamine.editor
 source.dir = .
 source.include_exts = py,eml
-version = 1.5
-requirements = python3,kivy,plyer
+version = 1.6
+requirements = python3,kivy
 orientation = portrait
 
 android.api = 30
@@ -14,11 +14,14 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 
-# Permissions pour Plyer et accès fichiers
+# Permissions complètes pour accès stockage
 android.permissions = READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,MANAGE_EXTERNAL_STORAGE
 
-# Gradle dependencies pour SAF (Storage Access Framework)
-android.gradle_dependencies = androidx.documentfile:documentfile:1.0.1
+# Permissions runtime pour Android 6+
+android.private_storage = True
+
+# Manifest pour permissions explicites
+android.add_src = src/
 
 [buildozer]
 log_level = 2
