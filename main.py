@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Luxamine - Éditeur de cartes Mifare Amine
-Version avec sélecteur système Android (SAF) via Plyer
+Version ultra-simple : charge automatiquement test.eml depuis Download
 """
 
 import os
@@ -18,13 +18,6 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.metrics import dp
 from kivy.clock import Clock
-
-# Import Plyer pour le sélecteur système Android
-try:
-    from plyer import filechooser
-    PLYER_AVAILABLE = True
-except ImportError:
-    PLYER_AVAILABLE = False
 
 class LuxamineCore:
     """Module de cryptographie Mifare intégré"""
@@ -56,61 +49,6 @@ class LuxamineCore:
             t.append(int(k, 16))
         return t
     
-    def swap_endianness(self, s, length_bits):
-        if s is None or not isinstance(s, str) or len(s) == 0:
-            return None
-        try:
-            if length_bits == 16:
-                t = self.lua_sub(s, 3, 4) + self.lua_sub(s, 1, 2)
-                return int(t, 16)
-            elif length_bits == 32:
-                t = self.lua_sub(s, 7, 8) + self.lua_sub(s, 5, 6) + self.lua_sub(s, 3, 4) + self.lua_sub(s, 1, 2)
-                return int(t, 16)
-            else:
-                return 0
-        except ValueError:
-            return None
-    
-    def from_hex(self, hex_str):
-        if hex_str is None: return b''
-        return bytes(int(hex_str[i:i+2], 16) for i in range(0, len(hex_str), 2) if i+1 < len(hex_str))
-    
-    def calc_crc(self, s):
-        ss = self.from_hex(s)
-        crc = 0x0000
-        for c in ss:
-            crc = self.bxor(crc, c)
-            for _ in range(8):
-                k = self.band(crc, 1)
-                crc = self.rsh(crc, 1)
-                if k != 0:
-                    crc = self.bxor(crc, 0xA001)
-        return crc
-    
-    def xtea_decrypt(self, num_rounds, v, key):
-        v0, v1 = v[0], v[1]
-        delta = 0x9E3779B9
-        sumv = (delta * num_rounds) & self.MASK32
-        for _ in range(num_rounds):
-            v1 = (v1 - self.bxor(self.bxor(self.lsh(v0, 4), self.rsh(v0, 5)) + v0, 
-                                sumv + key[self.band(self.rsh(sumv, 11), 3)])) & self.MASK32
-            sumv = (sumv - delta) & self.MASK32
-            v0 = (v0 - self.bxor(self.bxor(self.lsh(v1, 4), self.rsh(v1, 5)) + v1, 
-                                sumv + key[self.band(sumv, 3)])) & self.MASK32
-        v[0], v[1] = v0, v1
-    
-    def xtea_crypt(self, num_rounds, v, key):
-        v0, v1 = v[0], v[1]
-        delta = 0x9E3779B9
-        sumv = 0
-        for _ in range(num_rounds):
-            v0 = ((self.bxor(self.bxor(self.lsh(v1, 4), self.rsh(v1, 5)) + v1, 
-                            sumv + key[self.band(sumv, 3)]) + v0) & self.MASK32)
-            sumv = (sumv + delta) & self.MASK32
-            v1 = ((self.bxor(self.bxor(self.lsh(v0, 4), self.rsh(v0, 5)) + v0, 
-                            sumv + key[self.band(self.rsh(sumv, 11), 3)]) + v1) & self.MASK32)
-        v[0], v[1] = v0, v1
-    
     def create_xtea_key(self, mfuid):
         xteakey = [0, 0, 0, 0]
         buid = self.convert_hex_to_bytes(mfuid)
@@ -141,7 +79,9 @@ class LuxamineApp(App):
         self.core = LuxamineCore()
         self.eml_content = ""
         self.card_values = {}
-        self.decrypted_data = []
+        self.download_path = "/storage/emulated/0/Download"
+        self.test_file = "test.eml"
+        self.output_file = "test_patch.eml"
         
     def build(self):
         self.title = "Luxamine - Éditeur Mifare"
@@ -158,34 +98,24 @@ class LuxamineApp(App):
         )
         main_layout.add_widget(title_label)
         
-        # Bouton charger avec sélecteur système Android
-        self.load_button = Button(
-            text='Charger fichier EML (Sélecteur système)',
-            size_hint_y=None,
-            height=dp(50),
-            font_size=dp(16)
-        )
-        self.load_button.bind(on_press=self.open_file_chooser)
-        main_layout.add_widget(self.load_button)
-        
-        # Info sur Plyer
-        plyer_status = "✅ Sélecteur système Android (SAF)" if PLYER_AVAILABLE else "❌ Plyer non disponible"
-        plyer_label = Label(
-            text=plyer_status,
-            size_hint_y=None,
-            height=dp(25),
-            font_size=dp(10)
-        )
-        main_layout.add_widget(plyer_label)
-        
         # Info fichier
         self.file_info_label = Label(
-            text='Aucun fichier chargé',
+            text=f'Fichier: {self.test_file} (Download)',
             size_hint_y=None,
             height=dp(30),
             font_size=dp(12)
         )
         main_layout.add_widget(self.file_info_label)
+        
+        # Bouton charger automatique
+        self.load_button = Button(
+            text=f'Charger {self.test_file}',
+            size_hint_y=None,
+            height=dp(50),
+            font_size=dp(16)
+        )
+        self.load_button.bind(on_press=self.load_test_file)
+        main_layout.add_widget(self.load_button)
         
         # Zone d'édition
         self.edit_container = BoxLayout(orientation='vertical')
@@ -194,8 +124,8 @@ class LuxamineApp(App):
         # Boutons d'action
         self.action_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(60), spacing=dp(10))
         
-        self.save_button = Button(text='Sauvegarder EML modifié', font_size=dp(14))
-        self.save_button.bind(on_press=self.save_modified_eml)
+        self.save_button = Button(text=f'Sauvegarder {self.output_file}', font_size=dp(14))
+        self.save_button.bind(on_press=self.save_patched_eml)
         
         self.reset_button = Button(text='Réinitialiser', font_size=dp(14))
         self.reset_button.bind(on_press=self.reset_form)
@@ -206,71 +136,57 @@ class LuxamineApp(App):
         
         # Status
         self.status_label = Label(
-            text='Prêt - Chargez un fichier EML pour commencer',
+            text=f'Prêt - Cliquez "Charger {self.test_file}" pour commencer',
             size_hint_y=None,
             height=dp(40),
             font_size=dp(12)
         )
         main_layout.add_widget(self.status_label)
         
+        # Charger automatiquement au démarrage
+        Clock.schedule_once(self.auto_load_on_start, 1)
+        
         return main_layout
     
-    def open_file_chooser(self, instance):
-        """Ouvre le sélecteur de fichiers système Android via Plyer"""
-        if not PLYER_AVAILABLE:
-            self.show_error("Plyer n'est pas disponible.\nImpossible d'utiliser le sélecteur système Android.")
-            return
-        
-        try:
-            # Utiliser le sélecteur système Android (SAF)
-            filechooser.open_file(
-                on_selection=self.on_file_selected,
-                filters=['*.eml'],  # Filtre pour fichiers .eml
-                title="Sélectionner un fichier EML"
-            )
-            
-            # Mettre à jour le status
-            self.status_label.text = "Sélecteur de fichiers ouvert..."
-            
-        except Exception as e:
-            self.show_error(f"Erreur lors de l'ouverture du sélecteur: {str(e)}")
+    def auto_load_on_start(self, dt):
+        """Charge automatiquement test.eml au démarrage"""
+        self.load_test_file(None)
     
-    def on_file_selected(self, selection):
-        """Callback appelé quand un fichier est sélectionné"""
+    def load_test_file(self, instance):
+        """Charge automatiquement test.eml depuis Download"""
         try:
-            if selection:
-                # selection est une liste, prendre le premier fichier
-                filepath = selection[0] if isinstance(selection, list) else selection
+            # Chemins possibles pour Download
+            possible_paths = [
+                "/storage/emulated/0/Download",
+                "/sdcard/Download",
+                "/storage/emulated/0/Downloads", 
+                "/sdcard/Downloads"
+            ]
+            
+            file_path = None
+            for path in possible_paths:
+                test_path = os.path.join(path, self.test_file)
+                if os.path.exists(test_path):
+                    file_path = test_path
+                    self.download_path = path  # Mémoriser le bon chemin
+                    break
+            
+            if file_path:
+                # Lire le fichier test.eml
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    self.eml_content = f.read()
                 
-                # Vérifier que c'est bien un fichier .eml
-                if filepath and filepath.lower().endswith('.eml'):
-                    self.load_eml_file(filepath)
-                else:
-                    self.show_error("Le fichier sélectionné n'est pas un fichier .eml")
+                # Décrypter et extraire les valeurs
+                self.decrypt_and_extract()
+                self.create_edit_interface()
+                
+                self.status_label.text = f'✅ {self.test_file} chargé depuis {self.download_path}'
+                
             else:
-                self.status_label.text = "Aucun fichier sélectionné"
+                self.show_error(f"❌ Fichier {self.test_file} non trouvé dans Download.\n\nVeuillez placer votre fichier {self.test_file} dans le dossier Téléchargements de votre Samsung S25.")
                 
         except Exception as e:
-            self.show_error(f"Erreur lors de la sélection: {str(e)}")
-    
-    def load_eml_file(self, filepath):
-        """Charge et traite le fichier EML sélectionné"""
-        try:
-            # Lire le fichier
-            with open(filepath, 'r', encoding='utf-8') as f:
-                self.eml_content = f.read()
-            
-            # Décryptage et extraction
-            self.decrypt_and_extract()
-            self.create_edit_interface()
-            
-            # Mettre à jour l'interface
-            filename = os.path.basename(filepath)
-            self.file_info_label.text = f'Fichier: {filename}'
-            self.status_label.text = 'Fichier chargé - Vous pouvez modifier les valeurs'
-            
-        except Exception as e:
-            self.show_error(f"Erreur lors du chargement: {str(e)}")
+            self.show_error(f"Erreur lors du chargement de {self.test_file}: {str(e)}")
     
     def decrypt_and_extract(self):
         """Décrypte le fichier EML et extrait les valeurs importantes"""
@@ -284,15 +200,14 @@ class LuxamineApp(App):
                 if len(first_line) >= 8:
                     taguid = first_line[:8]
                 else:
-                    taguid = "12345678"  # UID par défaut
+                    taguid = "12345678"
             else:
                 taguid = "12345678"
             
             # Créer la clé XTEA
             xteakey = self.core.create_xtea_key(taguid)
             
-            # Pour cette version, on utilise des valeurs par défaut
-            # que l'utilisateur peut modifier
+            # Valeurs par défaut modifiables
             self.card_values = {
                 'version_a': 1,
                 'version_b': 1,
@@ -301,21 +216,6 @@ class LuxamineApp(App):
                 'date_a': '2024-01-01 12:00',
                 'date_b': '2024-01-01 12:00'
             }
-            
-            # Essayer d'extraire des vraies valeurs si possible
-            try:
-                # Analyser le contenu EML pour extraire des valeurs réelles
-                hex_lines = [line.strip() for line in lines if len(line.strip()) == 32]
-                if hex_lines:
-                    # Décrypter la première ligne de données
-                    first_data = hex_lines[0] if hex_lines else "00000000000000000000000000000000"
-                    
-                    # Simulation d'extraction de valeurs réelles
-                    # (ici on garde les valeurs par défaut mais on pourrait décrypter)
-                    pass
-            except:
-                # En cas d'erreur, garder les valeurs par défaut
-                pass
             
         except Exception as e:
             self.show_error(f"Erreur lors du décryptage: {str(e)}")
@@ -375,9 +275,13 @@ class LuxamineApp(App):
         scroll.add_widget(form_layout)
         self.edit_container.add_widget(scroll)
     
-    def save_modified_eml(self, instance):
-        """Sauvegarde le fichier EML modifié"""
+    def save_patched_eml(self, instance):
+        """Sauvegarde le fichier EML modifié en test_patch.eml"""
         try:
+            if not self.eml_content:
+                self.show_error("Aucun fichier chargé. Chargez d'abord test.eml.")
+                return
+            
             # Récupération des nouvelles valeurs
             new_values = {}
             new_values['version_a'] = int(self.inputs['version_a'].text or 0)
@@ -387,33 +291,15 @@ class LuxamineApp(App):
             new_values['date_a'] = self.inputs['date_a'].text
             new_values['date_b'] = self.inputs['date_b'].text
             
-            # Créer le fichier modifié
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Essayer plusieurs chemins de sauvegarde
-            possible_paths = [
-                '/storage/emulated/0/Download/',
-                '/sdcard/Download/',
-                '/storage/emulated/0/',
-                '/sdcard/',
-                './'
-            ]
-            
-            output_path = None
-            for path in possible_paths:
-                try:
-                    if os.path.exists(path) or path == './':
-                        output_path = os.path.join(path, f"luxamine_modified_{timestamp}.eml")
-                        break
-                except:
-                    continue
-            
-            if not output_path:
-                output_path = f"luxamine_modified_{timestamp}.eml"
+            # Chemin de sortie dans le même dossier Download
+            output_path = os.path.join(self.download_path, self.output_file)
             
             # Créer le contenu modifié
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
             modified_content = f"""# Luxamine - Fichier EML modifié
-# Timestamp: {timestamp}
+# Fichier source: {self.test_file}
+# Modifié le: {timestamp}
 # Version A: {new_values['version_a']}
 # Version B: {new_values['version_b']}
 # Crédit A: {new_values['credit_a']:.2f}€
@@ -423,15 +309,15 @@ class LuxamineApp(App):
 
 {self.eml_content}
 
-# Fin du fichier modifié
+# Fin du fichier modifié par Luxamine
 """
             
             # Écriture du fichier modifié
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(modified_content)
             
-            self.status_label.text = f'Fichier sauvegardé: {os.path.basename(output_path)}'
-            self.show_success(f"Fichier modifié sauvegardé:\n{output_path}\n\nLes nouvelles valeurs ont été appliquées.")
+            self.status_label.text = f'✅ {self.output_file} sauvegardé dans Download'
+            self.show_success(f"Fichier modifié sauvegardé:\n{output_path}\n\nLes nouvelles valeurs ont été appliquées dans {self.output_file}.")
             
         except Exception as e:
             self.show_error(f"Erreur lors de la sauvegarde: {str(e)}")
@@ -455,9 +341,9 @@ class LuxamineApp(App):
         content.add_widget(ok_btn)
         
         popup = Popup(
-            title='Erreur',
+            title='Information',
             content=content,
-            size_hint=(0.8, 0.4)
+            size_hint=(0.8, 0.5)
         )
         ok_btn.bind(on_press=popup.dismiss)
         popup.open()
@@ -473,10 +359,11 @@ class LuxamineApp(App):
         popup = Popup(
             title='Succès',
             content=content,
-            size_hint=(0.8, 0.4)
+            size_hint=(0.8, 0.5)
         )
         ok_btn.bind(on_press=popup.dismiss)
         popup.open()
 
 if __name__ == '__main__':
     LuxamineApp().run()
+    
