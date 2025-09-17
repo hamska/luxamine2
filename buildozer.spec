@@ -4,7 +4,7 @@ package.name = luxamine
 package.domain = com.luxamine.editor
 source.dir = .
 source.include_exts = py,eml
-version = 1.6
+version = 1.8
 requirements = python3,kivy
 orientation = portrait
 
@@ -14,14 +14,8 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.accept_sdk_license = True
 
-# Permissions complètes pour accès stockage
-android.permissions = READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,MANAGE_EXTERNAL_STORAGE
-
-# Permissions runtime pour Android 6+
-android.private_storage = True
-
-# Manifest pour permissions explicites
-android.add_src = src/
+# AUCUNE permission de stockage nécessaire (dossier privé)
+# android.permissions = 
 
 [buildozer]
 log_level = 2
